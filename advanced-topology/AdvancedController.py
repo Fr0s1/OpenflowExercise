@@ -176,13 +176,16 @@ class Router (object):
             else:
                 # First, check destination IP is in this Router LAN
                 if IPAddr(destination_ip).in_network(self.routing_table['Local Network']):
-                    # Next, if the destination MAC of that host is not known, send ARP Request
+                    # Next, if the destination MAC of that host is not known, broadcast ARP Request
                     if destination_ip not in self.arp_table:
                         log.debug("Router %s sent ARP for host with destination IP %s" % (self.router_id, destination_ip))
-
+                        
+                        # If there are packets already waiting for the destination MAC address corresponding to this destination IP
+                        # push the new packet into the queue
                         if destination_ip in self.packet_queue:
                             self.packet_queue[destination_ip]['Packet'].append[ip_packet]
                         else:
+                            # Else push to a new queue
                             self.packet_queue[destination_ip] = {'Packet': [ip_packet], 'Port': packet_in.in_port }
 
                         arp_request = arp()
@@ -199,20 +202,22 @@ class Router (object):
                         ethernet_frame.dst = EthAddr("FF:FF:FF:FF:FF:FF")
 
                         self.resend_packet(ethernet_frame, of.OFPP_FLOOD)  
+                    
+                    # Else the router already has the destination MAC
                     else:
                         ethernet_frame = ethernet()
                         ethernet_frame.src = EthAddr(self.routing_table['Gateway Interface'])
-                        ethernet_frame.dst = EthAddr(self.arp_table[destination_ip])
+                        ethernet_frame.dst = EthAddr(self.arp_table[destination_ip]) # Get next hop MAC address to send to this destination IP
                         ethernet_frame.payload = ip_packet
                         ethernet_frame.type = ethernet.IP_TYPE
 
-                        out_port = self.mac_to_port[self.arp_table[destination_ip]]
+                        out_port = self.mac_to_port[self.arp_table[destination_ip]] # The outgoing router port to reach this destionation MAC
                         msg = of.ofp_flow_mod()
                         msg.match.dl_type = ethernet.IP_TYPE
                         #msg.match.set_nw_dst(IPAddr(self.routing_table['Local Network']))
                         msg.match.nw_dst = IPAddr(destination_ip)
                         msg.actions.append(of.ofp_action_output(port = out_port) )
-                        msg.actions.append(of.ofp_action_dl_addr.set_src(EthAddr(self.routing_table['Gateway Interface'])))
+                        msg.actions.append(of.ofp_action_dl_addr.set_src(EthAddr(self.routing_table['Gateway Interface']))) # Set Ethernet frame source address to the router
                         msg.actions.append(of.ofp_action_dl_addr.set_dst(EthAddr(self.arp_table[destination_ip])))
 
                         self.resend_packet(ethernet_frame, out_port)
@@ -233,7 +238,8 @@ class Router (object):
 
                     if routable:
                         log.debug("Router %s: received IP Packet with destination IP %s not in router LAN! Will send to Next Hop %s" % (self.router_id, destination_ip, self.routing_table['Destination Network'][destination_network]))
-
+                        
+                        # If the next hop MAC address to reach this IP is not known by the router
                         if next_hop_ip not in self.arp_table:
                             log.debug("Router %s: MAC address of next hop IP is not known, send ARP from this router to get MAC address and put this packet in buffer!" % (self.router_id)) 
                             
